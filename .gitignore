@@ -1,0 +1,11 @@
+# Python
+scraper/venv/
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+.env
+
+# Next.js
+.next/

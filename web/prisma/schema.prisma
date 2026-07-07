@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Job {
+  id          String   @id @default(cuid())
+  job_hash    String   @unique
+  title       String
+  company     String
+  location    String?
+  description String?  @db.Text
+  status      JobStatus @default(DISCOVERED)
+  matchScore  Int?
+  missedRuns  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sources      JobSource[]
+  applications Application[]
+}
+
+enum JobStatus {
+  DISCOVERED
+  TAILORING
+  APPLIED
+  ARCHIVED
+}
+
+model JobSource {
+  id        String   @id @default(cuid())
+  jobId     String
+  url       String
+  platform  String
+  createdAt DateTime @default(now())
+  
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model SearchProfile {
+  id           String   @id @default(cuid())
+  searchTerm   String
+  location     String
+  remote       Boolean  @default(false)
+  platforms    String[]
+  jobTypes     String[]
+  hoursOld     Int      @default(24)
+  country      String?
+  easyApply    Boolean  @default(false)
+  deepScrape   Boolean  @default(true)
+  resultsWanted Int     @default(10)
+  isActive     Boolean  @default(true)
+  scrapeRuns   ScrapeRun[]
+}
+
+model ScrapeRun {
+  id           String    @id @default(cuid())
+  profileId    String
+  status       String    // PENDING, COMPLETED, FAILED
+  startTime    DateTime  @default(now())
+  endTime      DateTime?
+  duration     Int?      // in seconds
+  jobsFound    Int       @default(0)
+  errorMessage String?
+
+  profile      SearchProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+}
+
+model Application {
+  id              String   @id @default(cuid())
+  jobId           String   @unique
+  tailoredBullets String   @db.Text
+  coverLetter     String   @db.Text
+  createdAt       DateTime @default(now())
+
+  job             Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model UserResume {
+  id         String   @id @default(cuid())
+  content    String   @db.Text
+  skills     String[]
+  aiResponse Json?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
