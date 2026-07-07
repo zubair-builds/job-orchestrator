@@ -71,7 +71,7 @@ Once the database is running, you can boot up both the **Next.js Orchestrator** 
 - The scraper API will be available at `http://localhost:8000`.
 - Press `Ctrl+C` to gracefully shut down both services.
 
-*(Note: If you haven't run database migrations yet, you'll still need to run `cd web && npx prisma migrate dev --name init` once.)*
+*(Note: If you haven't run database migrations yet, you'll still need to run `cd web && npx prisma migrate dev --name init` once. If you modify the `prisma/schema.prisma` file in the future, remember to run `npx prisma generate` inside the `web` directory to keep your TypeScript types in sync!)*
 
 ## 🛠 Usage
 1. Open the dashboard at `http://localhost:3000`.
