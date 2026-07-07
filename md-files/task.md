@@ -1,0 +1,25 @@
+# Job Automation Pipeline Tasks
+
+- `[x]` **Project Setup**
+  - `[x]` Initialize Python Scraper Service in `/scraper`
+  - `[x]` Initialize Next.js Orchestrator in `/web` with Tailwind v3
+- `[x]` **Python Scraper Service (`/scraper`)**
+  - `[x]` Create `requirements.txt`
+  - `[x]` Create `main.py` with FastAPI endpoint `/api/scrape`
+  - `[x]` Implement JobSpy execution logic in background thread
+  - `[x]` Implement webhook delivery to Next.js with retry (`tenacity`)
+- `[ ]` **Next.js Orchestrator (`/web`) - Data Layer**
+  - `[x]` Install Prisma and set up `schema.prisma`
+  - `[ ]` Implement database migration (PostgreSQL)
+- `[ ]` **Next.js Orchestrator (`/web`) - Webhooks & Triage**
+  - `[x]` Implement `POST /api/webhooks/jobs` endpoint
+  - `[x]` Implement data normalization and deduplication hashing
+  - `[x]` Implement database upserts using Prisma
+  - `[x]` Implement Gemini API integration for automated triage scoring
+- `[ ]` **Next.js Orchestrator (`/web`) - UI & Tailoring**
+  - `[x]` Build Kanban dashboard in `app/page.tsx`
+  - `[x]` Implement `POST /api/tailor` endpoint with Gemini API for tailored applications
+- `[ ]` **Verification**
+  - `[ ]` Verify local execution of Python scraper
+  - `[ ]` Verify Next.js webhook processing and database storage
+  - `[ ]` Verify UI updates and AI tailoring
