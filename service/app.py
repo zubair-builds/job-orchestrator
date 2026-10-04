@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 import actors
 import store
@@ -72,7 +73,26 @@ def health():
     return {"status": "ok", "fixture": os.getenv("ALLOW_FIXTURE") == "1"}
 
 
-app.mount("/mcp", mcp.streamable_http_app(streamable_http_path="/", stateless_http=True, json_response=True))
+def transport_security() -> TransportSecuritySettings:
+    extra = [host.strip() for host in os.getenv("MCP_ALLOWED_HOSTS", "").split(",") if host.strip()]
+    hosts = ["job-orchestrator.onrender.com", "localhost:*", "127.0.0.1:*", *extra]
+    origins = [f"https://{host}" for host in hosts if ":" not in host]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts,
+        allowed_origins=origins,
+    )
+
+
+app.mount(
+    "/mcp",
+    mcp.streamable_http_app(
+        streamable_http_path="/",
+        stateless_http=True,
+        json_response=True,
+        transport_security=transport_security(),
+    ),
+)
 
 
 @app.middleware("http")
