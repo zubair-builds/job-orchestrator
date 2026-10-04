@@ -19,22 +19,12 @@ async def main() -> None:
                 await session.initialize()
                 listed = await session.call_tool("list_actors", {})
                 names = _names(listed)
-                if names != ["linkedin-jobs"]:
-                    raise SystemExit(f"expected only linkedin-jobs, got {names}")
-
-                started = await session.call_tool("call_actor", {
-                    "name": "linkedin-jobs",
-                    "input": {
-                        "search_term": "Full Stack Developer",
-                        "location": "Berlin",
-                        "results_wanted": 5,
-                        "fixture": True,
-                    },
-                })
+                if sorted(names) != ["glassdoor-jobs", "google-jobs", "indeed-jobs", "linkedin-jobs"]:
+                    raise SystemExit(f"expected four actors, got {names}")
+                started = await session.call_tool("call_actor", {"name": "linkedin-jobs", "input": {"search_term": "Full Stack Developer", "location": "Berlin", "results_wanted": 5, "fixture": True}})
                 body = _json(started)
                 run_id = body["runId"]
                 dataset_id = body["datasetId"]
-
                 run = body
                 for _ in range(20):
                     run = _json(await session.call_tool("get_run", {"runId": run_id}))
@@ -43,7 +33,6 @@ async def main() -> None:
                     time.sleep(0.3)
                 if run["status"] != "SUCCEEDED":
                     raise SystemExit(f"run did not succeed: {run}")
-
                 dataset = _json(await session.call_tool("get_dataset_items", {"datasetId": dataset_id}))
                 item = dataset["items"][0]
                 if item.get("platform") != "linkedin" or not item.get("title") or not item.get("url"):
@@ -53,8 +42,7 @@ async def main() -> None:
 
 def _json(result):
     import json
-    text = result.content[0].text
-    return json.loads(text)
+    return json.loads(result.content[0].text)
 
 
 def _names(result) -> list[str]:

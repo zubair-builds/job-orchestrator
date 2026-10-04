@@ -12,14 +12,9 @@ import store
 mcp = MCPServer("job-orchestrator")
 
 
-@mcp.tool(description="List runnable job actors. MVP exposes linkedin-jobs and indeed-jobs.")
+@mcp.tool(description="List runnable job actors.")
 def list_actors() -> dict:
-    return {
-        "actors": [
-            {"name": actor["name"], "title": actor["title"], "description": actor["description"]}
-            for actor in actors.ACTORS
-        ]
-    }
+    return {"actors": [{"name": actor["name"], "title": actor["title"], "description": actor["description"]} for actor in actors.ACTORS]}
 
 
 @mcp.tool(description="Get one actor, including its input schema.")
@@ -36,6 +31,10 @@ def call_actor(name: str, input: dict) -> dict:
         return actors.start_linkedin(input or {})
     if name == "indeed-jobs":
         return actors.start_indeed(input or {})
+    if name == "glassdoor-jobs":
+        return actors.start_glassdoor(input or {})
+    if name == "google-jobs":
+        return actors.start_google(input or {})
     raise ValueError("Actor is not runnable yet")
 
 
@@ -44,14 +43,7 @@ def get_run(runId: str) -> dict:
     run = store.get_run(runId)
     if not run:
         raise ValueError("Run not found")
-    return {
-        "runId": run["id"],
-        "actorName": run["actor_name"],
-        "status": run["status"],
-        "datasetId": run["dataset_id"],
-        "jobsFound": run["jobs_found"],
-        "errorMessage": run["error_message"],
-    }
+    return {"runId": run["id"], "actorName": run["actor_name"], "status": run["status"], "datasetId": run["dataset_id"], "jobsFound": run["jobs_found"], "errorMessage": run["error_message"]}
 
 
 @mcp.tool(description="Read dataset items for a finished run.")
@@ -79,22 +71,10 @@ def transport_security() -> TransportSecuritySettings:
     extra = [host.strip() for host in os.getenv("MCP_ALLOWED_HOSTS", "").split(",") if host.strip()]
     hosts = ["job-orchestrator.onrender.com", "localhost:*", "127.0.0.1:*", *extra]
     origins = [f"https://{host}" for host in hosts if ":" not in host]
-    return TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=hosts,
-        allowed_origins=origins,
-    )
+    return TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins)
 
 
-app.mount(
-    "/mcp",
-    mcp.streamable_http_app(
-        streamable_http_path="/",
-        stateless_http=True,
-        json_response=True,
-        transport_security=transport_security(),
-    ),
-)
+app.mount("/mcp", mcp.streamable_http_app(streamable_http_path="/", stateless_http=True, json_response=True, transport_security=transport_security()))
 
 
 @app.middleware("http")
