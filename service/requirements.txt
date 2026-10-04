@@ -3,3 +3,4 @@ uvicorn
 psycopg[binary]
 mcp>=2
 python-jobspy
+requests

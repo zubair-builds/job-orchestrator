@@ -1,6 +1,8 @@
 import os
+import re
 import uuid
 from threading import Thread
+from urllib.parse import urlparse
 
 import store
 
@@ -21,7 +23,7 @@ ACTORS = [
                 "results_wanted": {"type": "integer", "default": 25, "description": "How many LinkedIn results to page through. Default 25, max 100."},
                 "hours_old": {"type": "integer", "default": 24},
                 "is_remote": {"type": "boolean", "default": False, "description": "If true, ask LinkedIn for remote jobs only."},
-                "linkedin_fetch_description": {"type": "boolean", "default": True, "description": "Fetch each job page. Required for description and a direct apply URL. Slower."},
+                "linkedin_fetch_description": {"type": "boolean", "default": True, "description": "Fetch each job page. Required for description, workplace type, and a direct apply URL. Slower."},
                 "fixture": {"type": "boolean", "default": False, "description": "Test only. Requires ALLOW_FIXTURE=1."},
             },
         },
@@ -74,8 +76,10 @@ def _run_linkedin(run_id: str, dataset_id: str, payload: dict) -> None:
                 continue
             if _is_board_repost(company, url, str(row.get("job_url_direct") or "")):
                 continue
-            direct_url = str(row.get("job_url_direct") or "").strip()
+            page = _page_facts(url) if payload["linkedin_fetch_description"] else {}
+            direct_url = page.get("directUrl") or _clean(row.get("job_url_direct"))
             description = _clean(row.get("description"))
+            workplace = page.get("workplaceType")
             items.append({
                 "id": uuid.uuid4().hex,
                 "data": {
@@ -83,10 +87,11 @@ def _run_linkedin(run_id: str, dataset_id: str, payload: dict) -> None:
                     "company": company,
                     "location": row.get("location"),
                     "url": url,
-                    "directUrl": direct_url or None,
+                    "directUrl": direct_url,
                     "platform": "linkedin",
                     "description": description,
-                    "isRemote": _is_remote(row, title, description),
+                    "workplaceType": workplace,
+                    "isRemote": workplace == "remote",
                 },
             })
         store.add_items(run_id, dataset_id, items)
@@ -127,7 +132,6 @@ def _scrape(payload: dict) -> list[dict]:
 
 BOARD_HOSTS = (
     "arbeitnow.com",
-    "linkedin.com",
     "indeed.com",
     "glassdoor.com",
     "stepstone.de",
@@ -139,8 +143,22 @@ BOARD_HOSTS = (
     "remoteok.com",
     "weworkremotely.com",
     "ziprecruiter.com",
+    "randstad.com",
+    "randstad.de",
+    "ferchau.com",
+    "instaffo.com",
 )
-BOARD_NAMES = ("arbeitnow", "jooble", "jobrapido", "careerjet", "remote ok", "we work remotely")
+BOARD_NAMES = (
+    "arbeitnow",
+    "jooble",
+    "jobrapido",
+    "careerjet",
+    "remote ok",
+    "we work remotely",
+    "randstad",
+    "ferchau",
+    "instaffo",
+)
 
 
 def _is_board_repost(company: str, url: str, direct_url: str) -> bool:
@@ -148,18 +166,50 @@ def _is_board_repost(company: str, url: str, direct_url: str) -> bool:
     if any(board in name for board in BOARD_NAMES):
         return True
     host = _host(direct_url) or _host(url)
-    return any(board in host for board in BOARD_HOSTS if board != "linkedin.com")
+    return any(board in host for board in BOARD_HOSTS)
 
 
-def _is_remote(row: dict, title: str, description: str | None) -> bool:
-    if bool(row.get("is_remote")):
-        return True
-    text = " ".join(str(part or "") for part in (title, row.get("location"), description)).lower()
-    return any(token in text for token in ("remote", "hybrid", "work from home", "homeoffice", "home office"))
+def _page_facts(url: str) -> dict:
+    import requests
+
+    try:
+        response = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+        response.raise_for_status()
+    except Exception:
+        return {}
+    html = response.text
+    workplace = _criteria(html, "Workplace type")
+    return {
+        "workplaceType": workplace.lower() if workplace else None,
+        "directUrl": _apply_url(html),
+    }
+
+
+def _criteria(html: str, label: str) -> str | None:
+    match = re.search(
+        rf"{re.escape(label)}</h3>\s*<span[^>]*>\s*([^<]+)",
+        html,
+        re.I | re.S,
+    )
+    return match.group(1).strip() if match else None
+
+
+def _apply_url(html: str) -> str | None:
+    for pattern in (r'companyApplyUrl"\s*:\s*"([^"]+)"', r'externalApplyUrl"\s*:\s*"([^"]+)"'):
+        match = re.search(pattern, html)
+        if not match:
+            continue
+        url = match.group(1).replace("\\/", "/")
+        if url.startswith("http") and "linkedin.com" not in _host(url):
+            return url
+    return None
 
 
 def _host(url: str) -> str:
-    from urllib.parse import urlparse
     return urlparse(url).netloc.lower().removeprefix("www.")
 
 
