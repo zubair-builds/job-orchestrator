@@ -23,7 +23,7 @@ ACTORS = [
                 "results_wanted": {"type": "integer", "default": 25, "description": "How many LinkedIn results to page through. Default 25, max 100."},
                 "hours_old": {"type": "integer", "default": 24},
                 "is_remote": {"type": "boolean", "default": False, "description": "If true, ask LinkedIn for remote jobs only."},
-                "linkedin_fetch_description": {"type": "boolean", "default": True, "description": "Fetch each job page. Required for description, workplace type, and a direct apply URL. Slower."},
+                "linkedin_fetch_description": {"type": "boolean", "default": True, "description": "Fetch each job page. Required for description and a direct apply URL. Slower."},
                 "fixture": {"type": "boolean", "default": False, "description": "Test only. Requires ALLOW_FIXTURE=1."},
             },
         },
@@ -79,7 +79,7 @@ def _run_linkedin(run_id: str, dataset_id: str, payload: dict) -> None:
             page = _page_facts(url) if payload["linkedin_fetch_description"] else {}
             direct_url = page.get("directUrl") or _clean(row.get("job_url_direct"))
             description = _clean(row.get("description"))
-            workplace = page.get("workplaceType")
+            workplace = _workplace(title, row.get("location"), description, page.get("workplaceType"))
             items.append({
                 "id": uuid.uuid4().hex,
                 "data": {
@@ -131,34 +131,11 @@ def _scrape(payload: dict) -> list[dict]:
 
 
 BOARD_HOSTS = (
-    "arbeitnow.com",
-    "indeed.com",
-    "glassdoor.com",
-    "stepstone.de",
-    "xing.com",
-    "jooble.org",
-    "talent.com",
-    "jobrapido.com",
-    "careerjet.com",
-    "remoteok.com",
-    "weworkremotely.com",
-    "ziprecruiter.com",
-    "randstad.com",
-    "randstad.de",
-    "ferchau.com",
-    "instaffo.com",
+    "arbeitnow.com", "indeed.com", "glassdoor.com", "stepstone.de", "xing.com", "jooble.org",
+    "talent.com", "jobrapido.com", "careerjet.com", "remoteok.com", "weworkremotely.com",
+    "ziprecruiter.com", "randstad.com", "randstad.de", "ferchau.com", "instaffo.com",
 )
-BOARD_NAMES = (
-    "arbeitnow",
-    "jooble",
-    "jobrapido",
-    "careerjet",
-    "remote ok",
-    "we work remotely",
-    "randstad",
-    "ferchau",
-    "instaffo",
-)
+BOARD_NAMES = ("arbeitnow", "jooble", "jobrapido", "careerjet", "remote ok", "we work remotely", "randstad", "ferchau", "instaffo")
 
 
 def _is_board_repost(company: str, url: str, direct_url: str) -> bool:
@@ -169,32 +146,55 @@ def _is_board_repost(company: str, url: str, direct_url: str) -> bool:
     return any(board in host for board in BOARD_HOSTS)
 
 
+def _workplace(title: str, location, description: str | None, from_page: str | None) -> str | None:
+    if from_page in {"remote", "hybrid", "on-site"}:
+        return from_page
+    head = f"{title} {location or ''}".lower()
+    if _remote_phrase(head):
+        return "remote"
+    if "hybrid" in head:
+        return "hybrid"
+    if not description:
+        return None
+    remote = hybrid = False
+    for sentence in re.split(r"[.\n]", description.lower()):
+        if _negated(sentence):
+            continue
+        remote = remote or _body_remote(sentence)
+        hybrid = hybrid or "hybrid" in sentence
+    if remote:
+        return "remote"
+    if hybrid:
+        return "hybrid"
+    return None
+
+
+def _remote_phrase(text: str) -> bool:
+    return any(phrase in text for phrase in ("100% remote", "fully remote", "remote-first", "remote role", "remote position", "work remotely", "remote or hybrid", "remote"))
+
+
+def _body_remote(text: str) -> bool:
+    return any(phrase in text for phrase in ("100% remote", "fully remote", "remote-first", "remote role", "remote position", "work remotely", "remote or hybrid"))
+
+
+def _negated(sentence: str) -> bool:
+    return any(phrase in sentence for phrase in ("not remote", "no remote", "non-remote", "not a remote", "do not apply if", "don't apply if", "on-site only", "onsite only"))
+
+
 def _page_facts(url: str) -> dict:
     import requests
-
     try:
-        response = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=20,
-        )
+        response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
         response.raise_for_status()
     except Exception:
         return {}
     html = response.text
     workplace = _criteria(html, "Workplace type")
-    return {
-        "workplaceType": workplace.lower() if workplace else None,
-        "directUrl": _apply_url(html),
-    }
+    return {"workplaceType": workplace.lower() if workplace else None, "directUrl": _apply_url(html)}
 
 
 def _criteria(html: str, label: str) -> str | None:
-    match = re.search(
-        rf"{re.escape(label)}</h3>\s*<span[^>]*>\s*([^<]+)",
-        html,
-        re.I | re.S,
-    )
+    match = re.search(rf"{re.escape(label)}</h3>\s*<span[^>]*>\s*([^<]+)", html, re.I | re.S)
     return match.group(1).strip() if match else None
 
 
