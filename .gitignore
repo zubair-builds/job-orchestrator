@@ -6,6 +6,7 @@ __pycache__/
 # Node
 node_modules/
 .env
+mcp/node_modules/
 
 # Next.js
 .next/

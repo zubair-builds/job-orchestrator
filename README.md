@@ -1,46 +1,33 @@
 # Job orchestrator
 
-Job-hunt pipeline: a Python scraper pushes listings into a Next.js app that deduplicates them, stores them in Postgres, and triages with Gemini.
+Job-hunt pipeline. MVP client is MCP. One actor: `linkedin-jobs`.
 
-## Architecture
+- `/scraper` — FastAPI + JobSpy. `linkedin-jobs` forces LinkedIn.
+- `/web` — Next.js actor runtime. Runs, dataset items, Postgres.
+- `/mcp` — MCP server. `call_actor` returns ids. `get_dataset_items` returns rows.
 
-- `/scraper` — stateless FastAPI + JobSpy
-- `/web` — Next.js 14 orchestrator (normalize, dedupe, AI triage, Prisma)
-- Postgres via Docker Compose in `/web`
-
-## What it stores
-
-- Jobs and sources (LinkedIn, Indeed, etc.)
-- Search profiles and scrape-run history
-- Applications and resume variants from Gemini
-
-## Setup
-
-Needs Node 18+, Python 3.11+, Docker, and a Gemini API key.
+## MVP
 
 ```bash
 cd web
 docker compose up -d
-cp .env.example .env   # or create .env
-# DATABASE_URL, GEMINI_API_KEY, WEBHOOK_SECRET
-npx prisma migrate dev --name init
+cp .env.example .env
+npx prisma migrate dev
 cd ..
-./run.sh
+ALLOW_FIXTURE=1 ./run.sh
 ```
 
-- Dashboard: http://localhost:3000
-- Scraper: http://localhost:8000
-
-`run.sh` installs deps if needed and starts both apps. Ctrl+C stops them.
-
-Trigger a scrape:
+In another shell:
 
 ```bash
-curl -X POST http://localhost:8000/api/scrape \
-  -H "Content-Type: application/json" \
-  -H "x-scraper-secret: default_secret_for_dev" \
-  -d '{"site_name": ["linkedin", "indeed"], "search_term": "Full Stack Developer", "location": "Berlin", "results_wanted": 10, "hours_old": 24}'
+cd mcp
+npm install
+WEB_BASE_URL=http://localhost:3000 MCP_TOKEN=dev-token npm run e2e
 ```
+
+Live LinkedIn is the same `call_actor` input without `fixture`. Set `ALLOW_FIXTURE` only for the test.
+
+Actor input: `search_term`, `location`, `results_wanted`, `hours_old`, `is_remote`. No country field.
 
 ## Author
 
