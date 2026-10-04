@@ -7,8 +7,10 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 import actors
+import boards
 import store
 
+boards.register(actors)
 mcp = MCPServer("job-orchestrator")
 
 
@@ -32,9 +34,9 @@ def call_actor(name: str, input: dict) -> dict:
     if name == "indeed-jobs":
         return actors.start_indeed(input or {})
     if name == "glassdoor-jobs":
-        return actors.start_glassdoor(input or {})
+        return boards.start_glassdoor(input or {})
     if name == "google-jobs":
-        return actors.start_google(input or {})
+        return boards.start_google(input or {})
     raise ValueError("Actor is not runnable yet")
 
 
