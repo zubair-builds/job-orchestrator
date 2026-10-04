@@ -18,10 +18,10 @@ ACTORS = [
             "properties": {
                 "search_term": {"type": "string"},
                 "location": {"type": "string", "description": "LinkedIn location text, e.g. Berlin."},
-                "results_wanted": {"type": "integer", "default": 10},
+                "results_wanted": {"type": "integer", "default": 25, "description": "How many LinkedIn results to page through. Default 25, max 100."},
                 "hours_old": {"type": "integer", "default": 24},
-                "is_remote": {"type": "boolean", "default": False},
-                "linkedin_fetch_description": {"type": "boolean", "default": False},
+                "is_remote": {"type": "boolean", "default": False, "description": "If true, ask LinkedIn for remote jobs only."},
+                "linkedin_fetch_description": {"type": "boolean", "default": True, "description": "Fetch each job page. Required for description and a direct apply URL. Slower."},
                 "fixture": {"type": "boolean", "default": False, "description": "Test only. Requires ALLOW_FIXTURE=1."},
             },
         },
@@ -43,10 +43,10 @@ def parse_linkedin(raw: dict) -> dict:
     return {
         "search_term": search_term,
         "location": location,
-        "results_wanted": _clamp(raw.get("results_wanted"), 10, 1, 50),
+        "results_wanted": _clamp(raw.get("results_wanted"), 25, 1, 100),
         "hours_old": _clamp(raw.get("hours_old"), 24, 1, 720),
         "is_remote": bool(raw.get("is_remote")),
-        "linkedin_fetch_description": bool(raw.get("linkedin_fetch_description")),
+        "linkedin_fetch_description": raw.get("linkedin_fetch_description", True) is not False,
         "fixture": bool(raw.get("fixture")),
     }
 
@@ -72,6 +72,10 @@ def _run_linkedin(run_id: str, dataset_id: str, payload: dict) -> None:
             url = str(row.get("job_url") or row.get("job_url_direct") or "").strip()
             if not title or not company or not url:
                 continue
+            if _is_board_repost(company, url, str(row.get("job_url_direct") or "")):
+                continue
+            direct_url = str(row.get("job_url_direct") or "").strip()
+            description = _clean(row.get("description"))
             items.append({
                 "id": uuid.uuid4().hex,
                 "data": {
@@ -79,9 +83,10 @@ def _run_linkedin(run_id: str, dataset_id: str, payload: dict) -> None:
                     "company": company,
                     "location": row.get("location"),
                     "url": url,
+                    "directUrl": direct_url or None,
                     "platform": "linkedin",
-                    "description": row.get("description"),
-                    "isRemote": bool(row.get("is_remote")),
+                    "description": description,
+                    "isRemote": _is_remote(row, title, description),
                 },
             })
         store.add_items(run_id, dataset_id, items)
@@ -114,9 +119,53 @@ def _scrape(payload: dict) -> list[dict]:
         results_wanted=payload["results_wanted"],
         hours_old=payload["hours_old"],
         linkedin_fetch_description=payload["linkedin_fetch_description"],
+        fetch_description=payload["linkedin_fetch_description"],
         is_remote=payload["is_remote"],
     )
     return jobs.to_dict(orient="records")
+
+
+BOARD_HOSTS = (
+    "arbeitnow.com",
+    "linkedin.com",
+    "indeed.com",
+    "glassdoor.com",
+    "stepstone.de",
+    "xing.com",
+    "jooble.org",
+    "talent.com",
+    "jobrapido.com",
+    "careerjet.com",
+    "remoteok.com",
+    "weworkremotely.com",
+    "ziprecruiter.com",
+)
+BOARD_NAMES = ("arbeitnow", "jooble", "jobrapido", "careerjet", "remote ok", "we work remotely")
+
+
+def _is_board_repost(company: str, url: str, direct_url: str) -> bool:
+    name = company.lower()
+    if any(board in name for board in BOARD_NAMES):
+        return True
+    host = _host(direct_url) or _host(url)
+    return any(board in host for board in BOARD_HOSTS if board != "linkedin.com")
+
+
+def _is_remote(row: dict, title: str, description: str | None) -> bool:
+    if bool(row.get("is_remote")):
+        return True
+    text = " ".join(str(part or "") for part in (title, row.get("location"), description)).lower()
+    return any(token in text for token in ("remote", "hybrid", "work from home", "homeoffice", "home office"))
+
+
+def _host(url: str) -> str:
+    from urllib.parse import urlparse
+    return urlparse(url).netloc.lower().removeprefix("www.")
+
+
+def _clean(value) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _clamp(value, fallback: int, low: int, high: int) -> int:
