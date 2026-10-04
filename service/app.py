@@ -12,7 +12,7 @@ import store
 mcp = MCPServer("job-orchestrator")
 
 
-@mcp.tool(description="List runnable job actors. MVP exposes linkedin-jobs only.")
+@mcp.tool(description="List runnable job actors. MVP exposes linkedin-jobs and indeed-jobs.")
 def list_actors() -> dict:
     return {
         "actors": [
@@ -32,9 +32,11 @@ def get_actor(name: str) -> dict:
 
 @mcp.tool(description="Start an actor run. Returns runId and datasetId, not the listings.")
 def call_actor(name: str, input: dict) -> dict:
-    if name != "linkedin-jobs":
-        raise ValueError("Actor is not runnable yet")
-    return actors.start_linkedin(input or {})
+    if name == "linkedin-jobs":
+        return actors.start_linkedin(input or {})
+    if name == "indeed-jobs":
+        return actors.start_indeed(input or {})
+    raise ValueError("Actor is not runnable yet")
 
 
 @mcp.tool(description="Get actor run status. Poll until SUCCEEDED or FAILED.")
