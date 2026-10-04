@@ -30,8 +30,29 @@ ACTORS = [
     }
 ]
 
+INDEED_ACTOR = {
+    "name": "indeed-jobs",
+    "title": "Indeed jobs",
+    "description": "Search Indeed only. country is the Indeed site, default Germany. location is the city. call_actor returns runId and datasetId, not the rows. directUrl is the employer apply link when Indeed has one.",
+    "inputSchema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["search_term"],
+        "properties": {
+            "search_term": {"type": "string"},
+            "location": {"type": "string", "description": "City or region, e.g. Berlin. Omit to search the country."},
+            "country": {"type": "string", "default": "Germany", "description": "Indeed country name, e.g. Germany."},
+            "results_wanted": {"type": "integer", "default": 25},
+            "hours_old": {"type": "integer", "default": 72},
+            "is_remote": {"type": "boolean", "default": False, "description": "If true, Indeed remote filter. Indeed cannot combine this with hours_old."},
+            "fixture": {"type": "boolean", "default": False},
+        },
+    },
+}
+ACTORS.append(INDEED_ACTOR)
 
-def actor_by_name(name: str) -> dict | None:
+
+def actor_by_name(name: str):
     return next((actor for actor in ACTORS if actor["name"] == name), None)
 
 
@@ -51,6 +72,99 @@ def parse_linkedin(raw: dict) -> dict:
         "linkedin_fetch_description": raw.get("linkedin_fetch_description", True) is not False,
         "fixture": bool(raw.get("fixture")),
     }
+
+
+def start_indeed(raw: dict) -> dict:
+    payload = parse_indeed(raw)
+    run_id = uuid.uuid4().hex
+    dataset_id = f"ds_{uuid.uuid4().hex}"
+    store.create_run(run_id, dataset_id, "indeed-jobs", payload)
+    Thread(target=_run_indeed, args=(run_id, dataset_id, payload), daemon=True).start()
+    return {"runId": run_id, "datasetId": dataset_id, "status": "RUNNING"}
+
+
+def parse_indeed(raw: dict) -> dict:
+    search_term = str(raw.get("search_term") or "").strip()
+    if not search_term:
+        raise ValueError("search_term is required")
+    return {
+        "search_term": search_term,
+        "location": str(raw.get("location") or "").strip(),
+        "country": str(raw.get("country") or "Germany").strip() or "Germany",
+        "results_wanted": _clamp(raw.get("results_wanted"), 25, 1, 100),
+        "hours_old": _clamp(raw.get("hours_old"), 72, 1, 720),
+        "is_remote": bool(raw.get("is_remote")),
+        "fixture": bool(raw.get("fixture")),
+    }
+
+
+def _run_indeed(run_id: str, dataset_id: str, payload: dict) -> None:
+    try:
+        rows = _indeed_fixture(payload) if payload["fixture"] else _scrape_indeed(payload)
+        items = []
+        for row in rows:
+            if str(row.get("site") or "indeed").lower() != "indeed":
+                continue
+            title = str(row.get("title") or "").strip()
+            company = str(row.get("company") or "").strip()
+            url = str(row.get("job_url") or "").strip()
+            direct_url = _clean(row.get("job_url_direct"))
+            if not title or not company or not (url or direct_url):
+                continue
+            if _is_board_repost(company, url, direct_url or ""):
+                continue
+            description = _clean(row.get("description"))
+            workplace = _workplace(title, row.get("location"), description, "remote" if row.get("is_remote") else None)
+            items.append({
+                "id": uuid.uuid4().hex,
+                "data": {
+                    "title": title,
+                    "company": company,
+                    "location": row.get("location"),
+                    "url": url or direct_url,
+                    "directUrl": direct_url,
+                    "platform": "indeed",
+                    "description": description,
+                    "workplaceType": workplace,
+                    "isRemote": workplace == "remote",
+                },
+            })
+        store.add_items(run_id, dataset_id, items)
+        store.finish_run(run_id, "SUCCEEDED", len(items))
+    except Exception as exc:
+        store.finish_run(run_id, "FAILED", 0, str(exc))
+
+
+def _indeed_fixture(payload: dict) -> list[dict]:
+    if not ALLOW_FIXTURE:
+        raise RuntimeError("fixture requested but ALLOW_FIXTURE is not set")
+    return [{
+        "site": "indeed",
+        "title": "Backend Engineer",
+        "company": "Example AG",
+        "location": payload["location"] or payload["country"],
+        "job_url": "https://de.indeed.com/viewjob?jk=fixture-1",
+        "job_url_direct": "https://example.com/jobs/fixture-1",
+        "description": "Fixture Indeed listing.",
+        "is_remote": payload["is_remote"],
+    }]
+
+
+def _scrape_indeed(payload: dict) -> list[dict]:
+    from jobspy import scrape_jobs
+    kwargs = {
+        "site_name": ["indeed"],
+        "search_term": payload["search_term"],
+        "location": payload["location"] or None,
+        "results_wanted": payload["results_wanted"],
+        "country_indeed": payload["country"],
+        "fetch_description": True,
+    }
+    if payload["is_remote"]:
+        kwargs["is_remote"] = True
+    else:
+        kwargs["hours_old"] = payload["hours_old"]
+    return scrape_jobs(**kwargs).to_dict(orient="records")
 
 
 def start_linkedin(raw: dict) -> dict:
@@ -116,7 +230,6 @@ def _fixture(payload: dict) -> list[dict]:
 
 def _scrape(payload: dict) -> list[dict]:
     from jobspy import scrape_jobs
-
     jobs = scrape_jobs(
         site_name=["linkedin"],
         search_term=payload["search_term"],
@@ -142,35 +255,48 @@ def _is_board_repost(company: str, url: str, direct_url: str) -> bool:
     name = company.lower()
     if any(board in name for board in BOARD_NAMES):
         return True
-    host = _host(direct_url) or _host(url)
-    return any(board in host for board in BOARD_HOSTS)
+    host = _host(direct_url)
+    return bool(host) and any(board in host for board in BOARD_HOSTS)
 
 
 def _workplace(title: str, location, description: str | None, from_page: str | None) -> str | None:
     if from_page in {"remote", "hybrid", "on-site"}:
         return from_page
+    kept = []
+    for sentence in re.split(r"[.\n]", f"{title} {location or ''} {description or ''}".lower()):
+        if not _negated(sentence):
+            kept.append(sentence)
+    text = " ".join(kept)
+    if _hybrid(text):
+        return "hybrid"
+    if _onsite(text):
+        return "on-site"
     head = f"{title} {location or ''}".lower()
-    if _remote_phrase(head):
+    if _remote_phrase(head) or _body_remote(text):
         return "remote"
-    if "hybrid" in head:
-        return "hybrid"
-    if not description:
-        return None
-    remote = hybrid = False
-    for sentence in re.split(r"[.\n]", description.lower()):
-        if _negated(sentence):
-            continue
-        remote = remote or _body_remote(sentence)
-        hybrid = hybrid or "hybrid" in sentence
-    if remote:
-        return "remote"
-    if hybrid:
-        return "hybrid"
     return None
 
 
+def _hybrid(text: str) -> bool:
+    if "hybrid" in text:
+        return True
+    if re.search(r"remote(?: work)? (?:up to )?(?:\d+|one|two|three|four) days", text):
+        return True
+    if re.search(r"\d+\s*tage\s*(?:vor ort|im büro|homeoffice|mobil)", text):
+        return True
+    if re.search(r"(?:homeoffice|mobil).{0,24}\d|\d.{0,24}(?:homeoffice|mobil)", text):
+        return True
+    return "im büro" in text or "im buero" in text
+
+
+def _onsite(text: str) -> bool:
+    return any(phrase in text for phrase in ("in person", "on-site", "onsite", "vor ort"))
+
+
 def _remote_phrase(text: str) -> bool:
-    return any(phrase in text for phrase in ("100% remote", "fully remote", "remote-first", "remote role", "remote position", "work remotely", "remote or hybrid", "remote"))
+    if "remote-friendly" in text:
+        return False
+    return any(phrase in text for phrase in ("100% remote", "fully remote", "remote-first", "remote role", "remote position", "work remotely", "remote"))
 
 
 def _body_remote(text: str) -> bool:
