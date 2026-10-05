@@ -67,7 +67,7 @@ async def lifespan(_app: FastAPI):
         yield
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, redirect_slashes=False)
 
 
 @app.get("/health")
@@ -95,6 +95,14 @@ app.mount(
         transport_security=transport_security(),
     ),
 )
+
+
+@app.middleware("http")
+async def accept_mcp_without_slash(request: Request, call_next):
+    if request.scope["path"] == "/mcp":
+        request.scope["path"] = "/mcp/"
+        request.scope["raw_path"] = b"/mcp/"
+    return await call_next(request)
 
 
 @app.middleware("http")
