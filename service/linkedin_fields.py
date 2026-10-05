@@ -1,5 +1,5 @@
 import re
-from urllib.parse import urlparse
+from datetime import datetime, timezone
 
 AGENCY_NAMES = (
     "computer futures", "sthree", "jobgether", "darwin recruitment", "rebel recruiting",
@@ -9,6 +9,9 @@ AGENCY_NAMES = (
 def job_id(url: str) -> str | None:
     match = re.search(r"/jobs/view/(\d+)", url)
     return match.group(1) if match else None
+
+def row_id(dataset_id: str, job_id_value: str | None) -> str:
+    return f"{dataset_id}:{job_id_value}" if job_id_value else f"{dataset_id}:row"
 
 def is_agency(company: str, description: str | None) -> bool:
     name = company.lower()
@@ -46,19 +49,43 @@ def page_facts(url: str) -> dict:
     except Exception:
         return {}
     html = response.text
-    posted = re.search(r'<time[^>]*datetime="([^"]+)"', html)
     applicants = re.search(r"(\d[\d,]*)\s+applicants|first\s+(\d[\d,]*)\s+applicants", html, re.I)
+    count = None
+    if applicants:
+        count = (applicants.group(1) or applicants.group(2) or "").replace(",", "") or None
     return {
         "workplaceType": (_criteria(html, "Workplace type") or _criteria(html, "Arbeitsplatztyp") or "").lower() or None,
-        "postedAt": posted.group(1) if posted else None,
-        "applicantsCount": (applicants.group(1) or applicants.group(2) or "").replace(",", "") or None if applicants else None,
+        "postedAt": _posted_at(html),
+        "applicantsCount": count,
         "employmentType": _criteria(html, "Employment type") or _criteria(html, "Beschäftigungsart"),
         "seniorityLevel": _criteria(html, "Seniority level") or _criteria(html, "Karrierestufe"),
         "industries": _criteria(html, "Industries") or _criteria(html, "Branchen"),
-        "companyUrl": (re.search(r'href="(https://www.linkedin.com/company/[^"]+)"', html) or [None, None])[1],
-        "companyLogo": (re.search(r'data-delayed-url="(https://[^"]+)"', html) or [None, None])[1],
+        "companyUrl": _company_url(html),
+        "companyLogo": (re.search(r'topcard__logo[^>]*data-delayed-url="(https://[^"]+)"', html) or re.search(r'data-delayed-url="(https://[^"]+)"', html) or [None])[1] if False else _logo(html),
         "companySize": _criteria(html, "Company size") or _criteria(html, "Unternehmensgröße"),
     }
+
+def _posted_at(html: str) -> str | None:
+    match = re.search(r'posted-time-ago__text[^>]*datetime="([^"]+)"', html) or re.search(r'datetime="(\d{4}-\d{2}-\d{2})"[^>]*posted-time-ago__text', html)
+    if match:
+        return match.group(1)[:10]
+    listed = re.search(r'"listedAt"\s*:\s*(\d{10,13})', html)
+    if not listed:
+        return None
+    raw = int(listed.group(1))
+    if raw > 10_000_000_000:
+        raw //= 1000
+    return datetime.fromtimestamp(raw, timezone.utc).date().isoformat()
+
+def _company_url(html: str) -> str | None:
+    match = re.search(r'topcard__org-name-link[^>]*href="([^"]+)"', html) or re.search(r'href="(https://www\.linkedin\.com/company/[^"?]+)', html)
+    if not match:
+        return None
+    return match.group(1).split("?")[0]
+
+def _logo(html: str) -> str | None:
+    match = re.search(r'data-delayed-url="(https://[^"]+)"', html)
+    return match.group(1) if match else None
 
 def _criteria(html: str, label: str) -> str | None:
     match = re.search(rf"{re.escape(label)}</h3>\s*<span[^>]*>\s*([^<]+)", html, re.I | re.S)
