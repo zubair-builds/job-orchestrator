@@ -162,3 +162,42 @@ def _run_indeed(run_id: str, dataset_id: str, payload: dict) -> None:
         store.finish_run(run_id, "SUCCEEDED", len(items))
     except Exception as exc:
         store.finish_run(run_id, "FAILED", 0, str(exc))
+
+GLASSDOOR = {"name": "glassdoor-jobs", "title": "Glassdoor jobs", "description": "Search Glassdoor only. country must be a Glassdoor country, default Germany. location is the city and can be empty.", "inputSchema": {"type": "object", "additionalProperties": False, "required": ["search_term"], "properties": {"search_term": {"type": "string"}, "location": {"type": "string"}, "country": {"type": "string", "default": "Germany"}, "results_wanted": {"type": "integer", "default": 5}, "hours_old": {"type": "integer", "default": 168}, "is_remote": {"type": "boolean", "default": False}, "fixture": {"type": "boolean", "default": False}}}}
+ACTORS.append(GLASSDOOR)
+
+def start_glassdoor(raw: dict) -> dict:
+    search_term = str(raw.get("search_term") or "").strip()
+    if not search_term:
+        raise ValueError("search_term is required")
+    payload = {"search_term": search_term, "location": str(raw.get("location") or "").strip(), "country": str(raw.get("country") or "Germany").strip() or "Germany", "results_wanted": _clamp(raw.get("results_wanted"), 5, 1, 25), "hours_old": _clamp(raw.get("hours_old"), 168, 1, 720), "is_remote": bool(raw.get("is_remote")), "fixture": bool(raw.get("fixture"))}
+    run_id = uuid.uuid4().hex
+    dataset_id = f"ds_{uuid.uuid4().hex}"
+    store.create_run(run_id, dataset_id, "glassdoor-jobs", payload)
+    Thread(target=_run_glassdoor, args=(run_id, dataset_id, payload), daemon=True).start()
+    return {"runId": run_id, "datasetId": dataset_id, "status": "RUNNING"}
+
+def _run_glassdoor(run_id: str, dataset_id: str, payload: dict) -> None:
+    try:
+        from jobspy import scrape_jobs
+        kwargs = {"site_name": ["glassdoor"], "search_term": payload["search_term"], "location": payload["location"] or None, "results_wanted": payload["results_wanted"], "country_indeed": payload["country"], "hours_old": payload["hours_old"]}
+        if payload["is_remote"]:
+            kwargs["is_remote"] = True
+        rows = scrape_jobs(**kwargs).to_dict(orient="records")
+        items = []
+        dropped = 0
+        for row in rows:
+            title = str(row.get("title") or "").strip()
+            company = str(row.get("company") or "").strip()
+            url = str(row.get("job_url") or "").strip()
+            direct = _clean(row.get("job_url_direct"))
+            if not title or not company or not (url or direct):
+                continue
+            if lf.is_agency(company, row.get("description")):
+                dropped += 1
+                continue
+            items.append({"id": uuid.uuid4().hex, "data": {"title": title, "company": company, "location": row.get("location"), "url": url or direct, "directUrl": direct, "platform": "glassdoor", "description": _clean(row.get("description")), "workplaceType": lf.workplace(title, row.get("location"), row.get("description"), None), "isRemote": bool(row.get("is_remote")), "salary": lf.salary(title)}})
+        store.add_items(run_id, dataset_id, items)
+        store.finish_run(run_id, "SUCCEEDED", len(items), note=f"dropped {dropped} agency rows")
+    except Exception as exc:
+        store.finish_run(run_id, "FAILED", 0, str(exc))
