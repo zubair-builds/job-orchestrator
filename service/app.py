@@ -1,5 +1,6 @@
 import os
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -12,6 +13,8 @@ import store
 
 mcp = MCPServer("job-orchestrator")
 NAMES = "linkedin-jobs, indeed-jobs, glassdoor-jobs"
+DEFAULT_FIELDS = "id,title,company,location,url,postedAt,workplaceType,applicantsCount"
+ActorName = Literal["linkedin-jobs", "indeed-jobs", "glassdoor-jobs"]
 
 
 @mcp.tool(description="List runnable actors. Each entry includes a sample input, speed, and why fields are empty. Valid names: linkedin-jobs, indeed-jobs, glassdoor-jobs.")
@@ -25,15 +28,15 @@ def list_actors() -> dict:
 
 
 @mcp.tool(description="Get one actor, including its input schema, sample input, and empty-field reasons.")
-def get_actor(name: str) -> dict:
+def get_actor(name: ActorName) -> dict:
     actor = actors.actor_by_name(name)
     if not actor:
         raise ValueError(f"Actor not found. Valid names: {NAMES}")
     return {**actor, **notes.limits(name)}
 
 
-@mcp.tool(description="Start an actor run. Does not return jobs. Poll get_run with the returned runId until SUCCEEDED or FAILED, then call get_dataset_items. linkedin-jobs needs search_term and location. indeed-jobs and glassdoor-jobs need search_term; country defaults to Germany.")
-def call_actor(name: str, input: dict) -> dict:
+@mcp.tool(description="Start an actor run. name is linkedin-jobs, indeed-jobs, or glassdoor-jobs. Does not return jobs. Poll get_run with the returned runId until SUCCEEDED or FAILED, then call get_dataset_items. linkedin-jobs needs search_term and location. indeed-jobs and glassdoor-jobs need search_term; country defaults to Germany. LinkedIn directUrl is always null. Glassdoor description is always null.")
+def call_actor(name: ActorName, input: dict) -> dict:
     if name == "linkedin-jobs":
         started = actors.start_linkedin(input or {})
     elif name == "indeed-jobs":
@@ -47,7 +50,7 @@ def call_actor(name: str, input: dict) -> dict:
     return started
 
 
-@mcp.tool(description="Get actor run status. Returns durationSeconds, the agency note, and the next call. Poll until SUCCEEDED or FAILED.")
+@mcp.tool(description="Get actor run status. Returns durationSeconds, the agency note, and the next call. Poll until SUCCEEDED or FAILED. note is empty until the run finishes.")
 def get_run(runId: str) -> dict:
     run = store.get_run(runId)
     if not run:
@@ -67,19 +70,23 @@ def get_run(runId: str) -> dict:
     }
 
 
-@mcp.tool(description="Read dataset items. Descriptions are omitted unless includeDescription is true, so the model can keep the rows in context. The response includes fieldNotes explaining empty fields.")
-def get_dataset_items(datasetId: str, limit: int = 5, offset: int = 0, includeDescription: bool = False) -> dict:
+@mcp.tool(description="Read dataset items. fields defaults to id,title,company,location,url,postedAt,workplaceType,applicantsCount. Pass fields=description for one job only. includeDescription adds the posting text.")
+def get_dataset_items(datasetId: str, limit: int = 5, offset: int = 0, fields: str = DEFAULT_FIELDS, includeDescription: bool = False) -> dict:
     total, items = store.get_items(datasetId, max(1, min(limit, 100)), max(0, offset))
-    if not includeDescription:
-        items = [{key: value for key, value in item.items() if key != "description"} for item in items]
+    field_notes = notes.field_notes(items)
+    wanted = [part.strip() for part in (fields or DEFAULT_FIELDS).split(",") if part.strip()]
+    if includeDescription and "description" not in wanted:
+        wanted.append("description")
+    projected = [{key: item[key] for key in wanted if key in item} for item in items]
     return {
         "datasetId": datasetId,
         "total": total,
         "offset": offset,
         "limit": limit,
-        "fieldNotes": notes.field_notes(items),
-        "next": "Ask for includeDescription true on one job if you need the posting text.",
-        "items": items,
+        "fields": wanted,
+        "fieldNotes": field_notes,
+        "next": "Pass fields=description for one chosen job if you need the posting text.",
+        "items": projected,
     }
 
 
