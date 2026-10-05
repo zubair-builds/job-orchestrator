@@ -1,8 +1,6 @@
 import os
-import re
 import uuid
 from threading import Thread
-from urllib.parse import urlparse
 
 import store
 import linkedin_fields as lf
@@ -53,9 +51,10 @@ def _run_linkedin(run_id: str, dataset_id: str, payload: dict) -> None:
                 continue
             workplace = lf.workplace(title, row.get("location"), description, page.get("workplaceType"))
             job_id = lf.job_id(url)
-            items.append({"id": job_id or uuid.uuid4().hex, "data": {"id": job_id, "title": title, "company": company, "location": row.get("location"), "url": url, "directUrl": None, "platform": "linkedin", "description": description, "workplaceType": workplace, "isRemote": workplace == "remote", "postedAt": page.get("postedAt"), "applicantsCount": page.get("applicantsCount"), "employmentType": page.get("employmentType"), "seniorityLevel": page.get("seniorityLevel"), "industries": page.get("industries"), "salary": lf.salary(title, description), "companyUrl": page.get("companyUrl"), "companyLogo": page.get("companyLogo"), "companySize": page.get("companySize")}})
-        store.add_items(run_id, dataset_id, lf.merge_cities(items))
-        store.finish_run(run_id, "SUCCEEDED", len(items))
+            items.append({"id": lf.row_id(dataset_id, job_id) if job_id else uuid.uuid4().hex, "data": {"id": job_id, "title": title, "company": company, "location": row.get("location"), "url": url, "directUrl": None, "platform": "linkedin", "description": description, "workplaceType": workplace, "isRemote": workplace == "remote", "postedAt": page.get("postedAt"), "applicantsCount": page.get("applicantsCount"), "employmentType": page.get("employmentType"), "seniorityLevel": page.get("seniorityLevel"), "industries": page.get("industries"), "salary": lf.salary(title, description), "companyUrl": page.get("companyUrl"), "companyLogo": page.get("companyLogo"), "companySize": page.get("companySize")}})
+        stored = lf.merge_cities(items)
+        store.add_items(run_id, dataset_id, stored)
+        store.finish_run(run_id, "SUCCEEDED", len(stored))
     except Exception as exc:
         store.finish_run(run_id, "FAILED", 0, str(exc))
 
