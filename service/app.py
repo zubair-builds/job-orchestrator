@@ -12,7 +12,7 @@ import store
 mcp = MCPServer("job-orchestrator")
 
 
-@mcp.tool(description="List runnable job actors. MVP exposes linkedin-jobs and indeed-jobs.")
+@mcp.tool(description="List runnable job actors. LinkedIn, Indeed, and Glassdoor.")
 def list_actors() -> dict:
     return {
         "actors": [
@@ -36,6 +36,8 @@ def call_actor(name: str, input: dict) -> dict:
         return actors.start_linkedin(input or {})
     if name == "indeed-jobs":
         return actors.start_indeed(input or {})
+    if name == "glassdoor-jobs":
+        return actors.start_glassdoor(input or {})
     raise ValueError("Actor is not runnable yet")
 
 
