@@ -17,8 +17,10 @@ create table if not exists actor_run (
   started_at timestamptz not null default now(),
   finished_at timestamptz,
   error_message text,
-  jobs_found int not null default 0
+  jobs_found int not null default 0,
+  note text
 );
+alter table actor_run add column if not exists note text;
 create table if not exists dataset_item (
   id text primary key,
   dataset_id text not null,
@@ -60,15 +62,15 @@ def create_run(run_id: str, dataset_id: str, actor_name: str, payload: dict) -> 
         conn.commit()
 
 
-def finish_run(run_id: str, status: str, jobs_found: int, error: str | None = None) -> None:
+def finish_run(run_id: str, status: str, jobs_found: int, error: str | None = None, note: str | None = None) -> None:
     with connect() as conn:
         conn.execute(
             """
             update actor_run
-            set status = %s, finished_at = now(), jobs_found = %s, error_message = %s
+            set status = %s, finished_at = now(), jobs_found = %s, error_message = %s, note = %s
             where id = %s
             """,
-            (status, jobs_found, error, run_id),
+            (status, jobs_found, error, note, run_id),
         )
         conn.commit()
 

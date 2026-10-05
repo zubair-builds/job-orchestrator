@@ -50,6 +50,7 @@ def get_run(runId: str) -> dict:
         "status": run["status"],
         "datasetId": run["dataset_id"],
         "jobsFound": run["jobs_found"],
+        "note": run.get("note"),
         "errorMessage": run["error_message"],
     }
 
