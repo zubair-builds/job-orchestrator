@@ -36,8 +36,15 @@ def workplace(title: str, location, description: str | None, from_page: str | No
     return None
 
 def salary(title: str, description: str | None = None) -> str | None:
-    match = re.search(r"(?:bis|up to|to)?\s*(\d{2,3}(?:[.\s]\d{3})+)\s*€", title or "", re.I)
-    return f"{match.group(1)} €" if match else None
+    text = title or ""
+    span = re.search(r"€\s*(\d[\d.,]*)\s*(?:–|-|to)\s*€?\s*(\d[\d.,]*)", text, re.I)
+    if span:
+        return f"€{span.group(1)}–€{span.group(2)}"
+    match = re.search(r"(?:bis|up to|to)?\s*(\d{2,3}(?:[.\s]\d{3})+)\s*€", text, re.I)
+    if match:
+        return f"{match.group(1)} €"
+    euro_first = re.search(r"€\s*(\d{2,3}(?:[.,]\d{3})+)", text)
+    return f"€{euro_first.group(1)}" if euro_first else None
 
 def strip_injection(text: str | None) -> str | None:
     if not text:
@@ -49,12 +56,11 @@ def page_facts(url: str) -> dict:
     html = _get(url)
     if not html:
         return {}
-    applicants = re.search(r"(\d[\d,]*)\s+applicants|first\s+(\d[\d,]*)\s+applicants", html, re.I)
-    count = (applicants.group(1) or applicants.group(2) or "").replace(",", "") or None if applicants else None
     return {
+        "description": _description(html),
         "workplaceType": (_criteria(html, "Workplace type") or _criteria(html, "Arbeitsplatztyp") or "").lower() or None,
         "postedAt": _posted_at(html),
-        "applicantsCount": count,
+        "applicantsCount": _applicants(html),
         "employmentType": _criteria(html, "Employment type") or _criteria(html, "Beschäftigungsart"),
         "seniorityLevel": _criteria(html, "Seniority level") or _criteria(html, "Karrierestufe"),
         "industries": _criteria(html, "Industries") or _criteria(html, "Branchen"),
@@ -71,6 +77,23 @@ def company_profile(url: str) -> dict:
     site = re.search(r'"sameAs"\s*:\s*"(https?://[^"]+)"', html)
     website = site.group(1) if site and "linkedin.com" not in site.group(1) else None
     return {"companySize": size.group(1) if size else None, "companyWebsite": website}
+
+def _applicants(html: str) -> str | None:
+    over = re.search(r"(?:over|more than)\s+(\d[\d,]*)\s+applicants", html, re.I)
+    if over:
+        return over.group(1).replace(",", "") + "+"
+    applicants = re.search(r"(\d[\d,]*)\s+applicants|first\s+(\d[\d,]*)\s+applicants", html, re.I)
+    if not applicants:
+        return None
+    return (applicants.group(1) or applicants.group(2) or "").replace(",", "") or None
+
+def _description(html: str) -> str | None:
+    match = re.search(r'show-more-less-html__markup[^>]*>(.*?)</div>', html, re.I | re.S)
+    if not match:
+        return None
+    text = re.sub(r"<[^>]+>", " ", match.group(1))
+    text = re.sub(r"\s+", " ", unescape(text)).strip()
+    return text or None
 
 def _get(url: str) -> str:
     import requests
