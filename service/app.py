@@ -1,8 +1,9 @@
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
@@ -73,13 +74,17 @@ def get_run(runId: str) -> dict:
 @mcp.tool(description="Read dataset items. fields defaults to id,title,company,location,url,postedAt,workplaceType,applicantsCount. Pass fields=description for one job only. includeDescription adds the posting text.")
 def get_dataset_items(datasetId: str, limit: int = 5, offset: int = 0, fields: str = DEFAULT_FIELDS, includeDescription: bool = False) -> dict:
     total, items = store.get_items(datasetId, max(1, min(limit, 100)), max(0, offset))
+    return _project(datasetId, total, offset, limit, items, fields, includeDescription)
+
+
+def _project(dataset_id, total, offset, limit, items, fields, include_description):
     field_notes = notes.field_notes(items)
     wanted = [part.strip() for part in (fields or DEFAULT_FIELDS).split(",") if part.strip()]
-    if includeDescription and "description" not in wanted:
+    if include_description and "description" not in wanted:
         wanted.append("description")
     projected = [{key: item[key] for key in wanted if key in item} for item in items]
     return {
-        "datasetId": datasetId,
+        "datasetId": dataset_id,
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -103,6 +108,37 @@ app = FastAPI(lifespan=lifespan, redirect_slashes=False)
 @app.get("/health")
 def health():
     return {"status": "ok", "fixture": os.getenv("ALLOW_FIXTURE") == "1"}
+
+
+@app.get("/api/jobs")
+def api_jobs(
+    actor: ActorName = Query(description="linkedin-jobs, indeed-jobs, or glassdoor-jobs"),
+    search_term: str = Query(min_length=1),
+    location: str = "",
+    country: str = "Germany",
+    hours_old: int = 168,
+    limit: int = 5,
+):
+    payload = {"search_term": search_term, "location": location, "country": country, "hours_old": hours_old, "results_wanted": max(1, min(limit, 25))}
+    started = call_actor(actor, payload)
+    deadline = time.time() + 110
+    run = None
+    while time.time() < deadline:
+        run = store.get_run(started["runId"])
+        if run and run["status"] in {"SUCCEEDED", "FAILED"}:
+            break
+        time.sleep(1)
+    if not run or run["status"] != "SUCCEEDED":
+        return JSONResponse({"error": (run or {}).get("error_message") or "Timed out", "runId": started["runId"]}, status_code=504)
+    _total, items = store.get_items(run["dataset_id"], payload["results_wanted"], 0)
+    projected = _project(run["dataset_id"], _total, 0, payload["results_wanted"], items, DEFAULT_FIELDS, False)
+    return {
+        "actor": actor,
+        "durationSeconds": notes.duration_seconds(run.get("started_at"), run.get("finished_at")),
+        "note": run.get("note"),
+        "fieldNotes": projected["fieldNotes"],
+        "jobs": projected["items"],
+    }
 
 
 def transport_security() -> TransportSecuritySettings:
